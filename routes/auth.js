@@ -8,6 +8,8 @@
  *   GET  /me        -> return the current user (protected)
  *   PATCH /me/username -> change your login username (protected, needs your current password)
  *   DELETE /me      -> delete your own account (protected, needs your current password)
+ *
+ * Password reset / change / email linking live in routes/authOtp.js (same /api/auth prefix).
  */
 
 const express = require('express');
@@ -341,5 +343,18 @@ router.delete('/me', authenticate, async (req, res, next) => {
     next(err);
   }
 });
+
+// Shared with routes/authOtp.js (email-code flows) so both use the same rules, hashing cost and token format.
+router.helpers = {
+  signToken,
+  normalizeUsernameBody,
+  PASSWORD_MIN,
+  PASSWORD_MAX,
+  SALT_ROUNDS,
+  TOKEN_EXPIRY,
+  reauthLockedSeconds,
+  reauthFailed,
+  reauthOk,
+};
 
 module.exports = router;

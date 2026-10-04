@@ -20,6 +20,8 @@ if (!process.env.JWT_SECRET) {
 const { initAdminAuth } = require('./middleware/adminAuth');
 const db = require('./db');
 const authRoutes = require('./routes/auth');
+const authOtpRoutes = require('./routes/authOtp');
+const mailer = require('./services/mailer');
 const adminRoutes = require('./routes/admin');
 
 const app = express();
@@ -44,6 +46,7 @@ app.use(express.json({ limit: '10kb' })); // small limit: only credentials expec
 // --- Routes ------------------------------------------------------------------
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/api/auth', authRoutes);
+app.use('/api/auth', authOtpRoutes); // forgot / change password + email linking (email codes via Brevo)
 // Protected: only POST /api/admin/login is public; the rest needs an admin token.
 app.use('/api/admin', adminRoutes);
 
@@ -72,6 +75,13 @@ async function start() {
 
   const server = app.listen(PORT, () => {
     console.log(`Nexus backend running on http://localhost:${PORT}`);
+    if (!mailer.isConfigured()) {
+      console.warn(
+        process.env.NODE_ENV === 'production'
+          ? '[mail] BREVO_API_KEY / BREVO_FROM_EMAIL not set — password reset & email verification will FAIL.'
+          : '[mail] Brevo not configured — one-time codes will be printed here instead of emailed (dev mode).'
+      );
+    }
   });
 
   const shutdown = (signal) => {

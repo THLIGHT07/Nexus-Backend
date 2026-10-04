@@ -48,12 +48,33 @@ async function initDb() {
     );
   `);
 
-  // Migration: add `status` to databases created before this column existed.
-  const columns = db.exec('PRAGMA table_info(users);');
-  const hasStatus = columns[0]?.values.some((row) => row[1] === 'status');
-  if (!hasStatus) {
-    db.run("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active';");
-  }
+  // Migrations: add columns to databases created before they existed. Safe to run on every start.
+  const ensureColumn = (name, ddl) => {
+    const cols = db.exec('PRAGMA table_info(users);');
+    if (!cols[0]?.values.some((row) => row[1] === name)) db.run(`ALTER TABLE users ADD COLUMN ${ddl};`);
+  };
+  ensureColumn('status', "status TEXT NOT NULL DEFAULT 'active'");
+  ensureColumn('email', 'email TEXT');                                      // only ever holds a VERIFIED address
+  ensureColumn('email_verified', 'email_verified INTEGER NOT NULL DEFAULT 0'); // 0 / 1
+  ensureColumn('password_changed_at', 'password_changed_at INTEGER');       // unix seconds; older sessions are rejected
+  // SQLite can't add a UNIQUE column with ALTER TABLE, so uniqueness is a unique index (many NULLs are allowed).
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);');
+
+  // One-time codes (password reset / password change / email verification).
+  // Only a keyed hash of the code is stored, never the code itself. See services/otp.js.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS otp_codes (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL,
+      purpose    TEXT    NOT NULL,            -- 'reset' | 'change' | 'verify_email'
+      code_hash  TEXT    NOT NULL,
+      email      TEXT,                        -- the address a 'verify_email' code was sent to
+      attempts   INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL,            -- epoch milliseconds
+      created_at INTEGER NOT NULL
+    );
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS idx_otp_user_purpose ON otp_codes(user_id, purpose);');
 
   persist(); // makes sure the file exists right away
 }

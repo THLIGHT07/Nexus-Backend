@@ -31,13 +31,19 @@ function authenticate(req, res, next) {
 
   try {
     // Make sure the user still exists (e.g. wasn't deleted after the token was issued).
-    const user = db.get(
-      'SELECT id, username, status, created_at FROM users WHERE id = ?',
+    const row = db.get(
+      'SELECT id, username, status, created_at, email, email_verified, password_changed_at FROM users WHERE id = ?',
       [payload.id]
     );
-    if (!user) {
+    if (!row) {
       return res.status(401).json({ error: 'User no longer exists.' });
     }
+    // A password reset/change invalidates every session that was issued before it.
+    if (row.password_changed_at && (payload.iat || 0) < row.password_changed_at) {
+      return res.status(401).json({ error: 'Your password was changed. Please sign in again.' });
+    }
+    const { password_changed_at, ...user } = row;
+    user.email_verified = user.email_verified === 1;
     if (user.status === 'blocked') {
       return res
         .status(403)
