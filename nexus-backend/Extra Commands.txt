@@ -1,5 +1,0 @@
-Kaam,Command
-Band karna,systemctl --user stop nexus-backend
-Dobara start,systemctl --user start nexus-backend
-Logs dekhna,journalctl --user -u nexus-backend -f
-Disable auto-start,systemctl --user disable nexus-backend
