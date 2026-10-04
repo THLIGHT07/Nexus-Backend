@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nexus Auth Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 380px; margin: 60px auto; padding: 0 16px; }
+    input, button { width: 100%; padding: 10px; margin: 6px 0; font-size: 15px; box-sizing: border-box; }
+    button { cursor: pointer; }
+    .row { display: flex; gap: 8px; }
+    #msg { margin-top: 12px; min-height: 24px; font-weight: 600; }
+    .ok { color: #157f3b; } .err { color: #c0392b; }
+  </style>
+</head>
+<body>
+  <h2>Nexus Auth Demo</h2>
+
+  <!-- Shown when logged out -->
+  <div id="authBox">
+    <input id="username" placeholder="Username" autocomplete="username" />
+    <input id="password" type="password" placeholder="Password (min 8 chars)" autocomplete="current-password" />
+    <div class="row">
+      <button id="loginBtn">Log in</button>
+      <button id="registerBtn">Register</button>
+    </div>
+  </div>
+
+  <!-- Shown when logged in -->
+  <div id="userBox" hidden>
+    <p>Logged in as <strong id="who"></strong></p>
+    <button id="logoutBtn">Log out</button>
+  </div>
+
+  <div id="msg"></div>
+
+  <script src="nexus-auth.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function show(text, ok = true) {
+      $('msg').textContent = text;
+      $('msg').className = ok ? 'ok' : 'err';
+    }
+
+    // Switch between the login form and the "logged in" view.
+    async function refresh() {
+      const user = await NexusAuth.me();
+      $('authBox').hidden = Boolean(user);
+      $('userBox').hidden = !user;
+      if (user) $('who').textContent = user.username;
+    }
+
+    $('registerBtn').onclick = async () => {
+      try {
+        await NexusAuth.register($('username').value, $('password').value);
+        show('Registered! Now click Log in.');
+      } catch (e) { show(e.message, false); }
+    };
+
+    $('loginBtn').onclick = async () => {
+      try {
+        await NexusAuth.login($('username').value, $('password').value);
+        show('Logged in!');
+        refresh();
+      } catch (e) { show(e.message, false); }
+    };
+
+    $('logoutBtn').onclick = () => { NexusAuth.logout(); show('Logged out.'); refresh(); };
+
+    refresh(); // check on page load (stays logged in after reload)
+  </script>
+</body>
+</html>
