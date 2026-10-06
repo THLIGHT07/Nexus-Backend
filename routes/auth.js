@@ -100,8 +100,8 @@ function usernameRejection(problems) {
 }
 
 /** True if another account (not `exceptId`) already uses this name, ignoring case. */
-function usernameTaken(name, exceptId) {
-  return !!db.get('SELECT id FROM users WHERE lower(username) = ? AND id <> ?', [name, exceptId || 0]);
+async function usernameTaken(name, exceptId) {
+  return !!(await db.get('SELECT id FROM users WHERE lower(username) = $1 AND id <> $2', [name, exceptId || 0]));
 }
 
 // Wrong-password limiter for actions that re-ask for the password (delete account, change username):
@@ -146,18 +146,18 @@ router.post('/register', normalizeUsernameBody, registerGuard, async (req, res, 
     }
 
     // Friendly duplicate check (the UNIQUE constraint below is the real guard).
-    if (usernameTaken(username)) {
+    if (await usernameTaken(username)) {
       return res.status(409).json({ error: USERNAME_TAKEN });
     }
 
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-    let result;
+    let user;
     try {
-      result = db.run('INSERT INTO users (username, password) VALUES (?, ?)', [
-        username,
-        hashedPassword,
-      ]);
+      user = await db.get(
+        'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, created_at',
+        [username, hashedPassword]
+      );
     } catch (err) {
       // Handles a race where two requests register the same name at once.
       if (db.isUniqueViolation(err)) {
@@ -165,11 +165,6 @@ router.post('/register', normalizeUsernameBody, registerGuard, async (req, res, 
       }
       throw err;
     }
-
-    const user = db.get(
-      'SELECT id, username, created_at FROM users WHERE id = ?',
-      [result.lastInsertRowid]
-    );
 
     return res.status(201).json({
       message: 'User registered successfully.',
@@ -193,15 +188,15 @@ router.post('/login', normalizeUsernameBody, loginGuard, async (req, res, next) 
     }
 
     const { username, password } = creds;
-    // Case-insensitive, so accounts created before the lowercase rule still log in. An exact match wins
-    // if two old accounts differ only by case.
-    const user = db.get(
-      'SELECT * FROM users WHERE lower(username) = ? ORDER BY CASE WHEN username = ? THEN 0 ELSE 1 END',
-      [username, username]
+    // Case-insensitive (the database enforces one account per lower-cased name), so accounts created
+    // before the lowercase rule still log in.
+    const user = await db.get(
+      'SELECT id, username, password_hash, status, created_at FROM users WHERE lower(username) = $1',
+      [username]
     );
 
     // Always run a bcrypt comparison, even for unknown users.
-    const hashToCheck = user ? user.password : DUMMY_HASH;
+    const hashToCheck = user ? user.password_hash : DUMMY_HASH;
     const passwordMatches = await bcrypt.compare(password, hashToCheck);
 
     if (!user || !passwordMatches) {
@@ -272,10 +267,10 @@ router.patch('/me/username', authenticate, normalizeUsernameBody, async (req, re
       return res.status(429).json({ error: 'Too many wrong passwords. Try again in a few minutes.' });
     }
 
-    const user = db.get('SELECT id, username, password FROM users WHERE id = ?', [userId]);
+    const user = await db.get('SELECT id, username, password_hash FROM users WHERE id = $1', [userId]);
     if (!user) return res.status(404).json({ error: 'Account not found.' });
 
-    if (!(await bcrypt.compare(password, user.password))) {
+    if (!(await bcrypt.compare(password, user.password_hash))) {
       reauthFailed(userId);
       return res.status(401).json({ error: 'Incorrect password.' });
     }
@@ -284,12 +279,12 @@ router.patch('/me/username', authenticate, normalizeUsernameBody, async (req, re
     if (user.username === username) {
       return res.status(400).json({ error: 'That is already your username.' });
     }
-    if (usernameTaken(username, userId)) {
+    if (await usernameTaken(username, userId)) {
       return res.status(409).json({ error: USERNAME_TAKEN });
     }
 
     try {
-      db.run('UPDATE users SET username = ? WHERE id = ?', [username, userId]);
+      await db.run('UPDATE users SET username = $1 WHERE id = $2', [username, userId]);
     } catch (err) {
       if (db.isUniqueViolation(err)) return res.status(409).json({ error: USERNAME_TAKEN });
       throw err;
@@ -327,16 +322,16 @@ router.delete('/me', authenticate, async (req, res, next) => {
       return res.status(429).json({ error: 'Too many wrong passwords. Try again in a few minutes.' });
     }
 
-    const user = db.get('SELECT id, username, password FROM users WHERE id = ?', [userId]);
+    const user = await db.get('SELECT id, username, password_hash FROM users WHERE id = $1', [userId]);
     if (!user) return res.status(404).json({ error: 'Account not found.' });
 
-    if (!(await bcrypt.compare(password, user.password))) {
+    if (!(await bcrypt.compare(password, user.password_hash))) {
       reauthFailed(userId);
       return res.status(401).json({ error: 'Incorrect password.' });
     }
 
     reauthOk(userId);
-    db.run('DELETE FROM users WHERE id = ?', [user.id]);
+    await db.run('DELETE FROM users WHERE id = $1', [user.id]); // profile, settings, apps, notes and codes go with it (ON DELETE CASCADE)
     console.log(`[auth] user #${user.id} (${user.username}) deleted their account`);
     return res.json({ message: 'Account deleted.' });
   } catch (err) {

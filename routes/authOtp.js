@@ -73,22 +73,22 @@ function passwordProblem(pw) {
 }
 
 /** Account for a typed username or email (email only matches VERIFIED addresses). Blocked accounts are ignored. */
-function findByIdentifier(ident) {
+async function findByIdentifier(ident) {
   if (typeof ident !== 'string') return undefined;
   const v = ident.trim().toLowerCase();
   if (!v || v.length > 254) return undefined;
   const user = v.includes('@')
-    ? db.get('SELECT * FROM users WHERE email = ? AND email_verified = 1', [v])
-    : db.get('SELECT * FROM users WHERE lower(username) = ?', [v]);
+    ? await db.get('SELECT id, username, status, email, email_verified FROM users WHERE email = $1 AND email_verified = TRUE', [v])
+    : await db.get('SELECT id, username, status, email, email_verified FROM users WHERE lower(username) = $1', [v]);
   return user && user.status !== 'blocked' ? user : undefined;
 }
-const hasVerifiedEmail = (u) => Boolean(u && u.email && u.email_verified === 1);
+const hasVerifiedEmail = (u) => Boolean(u && u.email && u.email_verified === true);
 
 /** Sets the password and kills older sessions + outstanding codes. */
 async function setPassword(userId, newPassword) {
   const hash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-  db.run('UPDATE users SET password = ?, password_changed_at = ? WHERE id = ?', [hash, Math.floor(Date.now() / 1000), userId]);
-  otp.clearForUser(userId, ['reset', 'change']);
+  await db.run('UPDATE users SET password_hash = $1, password_changed_at = $2 WHERE id = $3', [hash, Math.floor(Date.now() / 1000), userId]);
+  await otp.clearForUser(userId, ['reset', 'change']);
 }
 
 /** Only authenticate when the caller is doing the logged-in 'change' flow. */
@@ -100,27 +100,28 @@ function authIfChange(req, res, next) {
 const asString = (v, max = 254) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
 // ── POST /forgot-password ────────────────────────────────────────────────────
-router.post('/forgot-password', normalizeUsernameBody, (req, res, next) => {
+router.post('/forgot-password', normalizeUsernameBody, async (req, res, next) => {
   try {
     const ident = asString(req.body && req.body.username);
     if (!ident) return res.status(400).json({ error: 'Enter your username or email.' });
     if (!allowCodeRequest(req, res, 'reset', ident)) return; // 429 already sent
 
-    const user = findByIdentifier(ident);
+    const user = await findByIdentifier(ident); // one query whether or not the account exists
+    res.json(FORGOT_REPLY); // same reply, sent at the same point, for every case
     if (hasVerifiedEmail(user)) {
-      const { code, expiresMinutes } = otp.issue({ userId: user.id, purpose: 'reset' });
-      // Not awaited on purpose: the reply must not be slower for real accounts than for unknown ones.
-      sendOtpEmail({ to: user.email, code, purpose: 'reset', expiresMinutes })
-        .catch((err) => console.error(`[otp] reset email for user #${user.id} failed: ${err.message}`));
+      // After the reply, so the extra work for a real account (code write + mail) can't be timed from outside.
+      (async () => {
+        const { code, expiresMinutes } = await otp.issue({ userId: user.id, purpose: 'reset' });
+        await sendOtpEmail({ to: user.email, code, purpose: 'reset', expiresMinutes });
+      })().catch((err) => console.error(`[otp] reset email for user #${user.id} failed: ${err.message}`));
     }
-    return res.json(FORGOT_REPLY); // same reply for every case
   } catch (err) {
     next(err);
   }
 });
 
 // ── POST /verify-otp ─────────────────────────────────────────────────────────
-router.post('/verify-otp', authIfChange, normalizeUsernameBody, (req, res, next) => {
+router.post('/verify-otp', authIfChange, normalizeUsernameBody, async (req, res, next) => {
   try {
     const { purpose, otp: code } = req.body || {};
     if (purpose !== 'reset' && purpose !== 'change') return res.status(400).json({ error: 'Invalid request.' });
@@ -129,8 +130,8 @@ router.post('/verify-otp', authIfChange, normalizeUsernameBody, (req, res, next)
     if (!subject) return res.status(400).json({ error: 'Invalid request.' });
     if (!allowCodeTry(req, res, purpose, subject)) return;
 
-    const userId = purpose === 'change' ? req.user.id : (findByIdentifier(subject) || {}).id;
-    const result = userId ? otp.check({ userId, purpose, code: asString(code, 12), consume: false }) : { ok: false };
+    const userId = purpose === 'change' ? req.user.id : ((await findByIdentifier(subject)) || {}).id;
+    const result = userId ? await otp.check({ userId, purpose, code: asString(code, 12), consume: false }) : { ok: false };
     if (!result.ok) return res.status(400).json({ error: INVALID_CODE });
     return res.json({ valid: true });
   } catch (err) {
@@ -148,8 +149,8 @@ router.post('/reset-password', normalizeUsernameBody, async (req, res, next) => 
     if (!ident) return res.status(400).json({ error: INVALID_CODE });
     if (!allowCodeTry(req, res, 'reset', ident)) return;
 
-    const user = findByIdentifier(ident);
-    const result = user ? otp.check({ userId: user.id, purpose: 'reset', code: asString(code, 12), consume: true }) : { ok: false };
+    const user = await findByIdentifier(ident);
+    const result = user ? await otp.check({ userId: user.id, purpose: 'reset', code: asString(code, 12), consume: true }) : { ok: false };
     if (!result.ok) return res.status(400).json({ error: INVALID_CODE });
 
     await setPassword(user.id, newPassword);
@@ -163,19 +164,19 @@ router.post('/reset-password', normalizeUsernameBody, async (req, res, next) => 
 // ── POST /change-password/send-otp  (JWT) ────────────────────────────────────
 router.post('/change-password/send-otp', authenticate, async (req, res, next) => {
   try {
-    const user = db.get('SELECT id, email, email_verified FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get('SELECT id, email, email_verified FROM users WHERE id = $1', [req.user.id]);
     if (!user) return res.status(404).json({ error: 'Account not found.' });
     if (!hasVerifiedEmail(user)) {
       return res.status(400).json({ error: 'Add and verify an email address first.', code: 'EMAIL_REQUIRED' });
     }
     if (!allowCodeRequest(req, res, 'change', `user:${user.id}`)) return;
 
-    const { code, expiresMinutes } = otp.issue({ userId: user.id, purpose: 'change' });
+    const { code, expiresMinutes } = await otp.issue({ userId: user.id, purpose: 'change' });
     try {
       await sendOtpEmail({ to: user.email, code, purpose: 'change', expiresMinutes });
     } catch (err) {
       console.error(`[otp] change email for user #${user.id} failed: ${err.message}`);
-      otp.clearForUser(user.id, ['change']);
+      await otp.clearForUser(user.id, ['change']);
       return res.status(502).json({ error: "We couldn't send the email right now. Please try again in a moment." });
     }
     return res.json({ message: `We sent a 6-digit code to ${maskEmail(user.email)}.`, maskedEmail: maskEmail(user.email), cooldownSeconds: COOLDOWN_SECONDS });
@@ -192,13 +193,13 @@ router.post('/change-password', authenticate, async (req, res, next) => {
     if (pwProblem) return res.status(400).json({ error: pwProblem });
     if (!allowCodeTry(req, res, 'change', `user:${req.user.id}`)) return;
 
-    const user = db.get('SELECT id, username, password FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get('SELECT id, username, password_hash FROM users WHERE id = $1', [req.user.id]);
     if (!user) return res.status(404).json({ error: 'Account not found.' });
 
-    const result = otp.check({ userId: user.id, purpose: 'change', code: asString(code, 12), consume: true });
+    const result = await otp.check({ userId: user.id, purpose: 'change', code: asString(code, 12), consume: true });
     if (!result.ok) return res.status(400).json({ error: INVALID_CODE });
 
-    if (await bcrypt.compare(newPassword, user.password)) {
+    if (await bcrypt.compare(newPassword, user.password_hash)) {
       return res.status(400).json({ error: 'Choose a password different from your current one. (Request a new code to try again.)' });
     }
 
@@ -228,9 +229,9 @@ router.post('/link-email', authenticate, async (req, res, next) => {
       res.set('Retry-After', String(locked));
       return res.status(429).json({ error: 'Too many wrong passwords. Try again in a few minutes.' });
     }
-    const user = db.get('SELECT id, password, email, email_verified FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get('SELECT id, password_hash, email, email_verified FROM users WHERE id = $1', [req.user.id]);
     if (!user) return res.status(404).json({ error: 'Account not found.' });
-    if (!(await bcrypt.compare(password, user.password))) {
+    if (!(await bcrypt.compare(password, user.password_hash))) {
       reauthFailed(user.id);
       return res.status(401).json({ error: 'Incorrect password.' });
     }
@@ -247,14 +248,14 @@ router.post('/link-email', authenticate, async (req, res, next) => {
       cooldownSeconds: COOLDOWN_SECONDS,
     };
     // Address already belongs to someone else: say nothing different (no email enumeration), send nothing.
-    if (db.get('SELECT id FROM users WHERE email = ? AND id <> ?', [email, user.id])) return res.json(reply);
+    if (await db.get('SELECT id FROM users WHERE email = $1 AND id <> $2', [email, user.id])) return res.json(reply);
 
-    const { code, expiresMinutes } = otp.issue({ userId: user.id, purpose: 'verify_email', email });
+    const { code, expiresMinutes } = await otp.issue({ userId: user.id, purpose: 'verify_email', email });
     try {
       await sendOtpEmail({ to: email, code, purpose: 'verify_email', expiresMinutes });
     } catch (err) {
       console.error(`[otp] verify-email mail for user #${user.id} failed: ${err.message}`);
-      otp.clearForUser(user.id, ['verify_email']);
+      await otp.clearForUser(user.id, ['verify_email']);
       return res.status(502).json({ error: "We couldn't send the email right now. Please try again in a moment." });
     }
     return res.json(reply);
@@ -264,19 +265,19 @@ router.post('/link-email', authenticate, async (req, res, next) => {
 });
 
 // ── POST /verify-email  (JWT) ────────────────────────────────────────────────
-router.post('/verify-email', authenticate, (req, res, next) => {
+router.post('/verify-email', authenticate, async (req, res, next) => {
   try {
     if (!allowCodeTry(req, res, 'verify_email', `user:${req.user.id}`)) return;
-    const result = otp.check({ userId: req.user.id, purpose: 'verify_email', code: asString(req.body && req.body.otp, 12), consume: true });
+    const result = await otp.check({ userId: req.user.id, purpose: 'verify_email', code: asString(req.body && req.body.otp, 12), consume: true });
     if (!result.ok || !result.email) return res.status(400).json({ error: INVALID_CODE });
 
     try {
-      db.run('UPDATE users SET email = ?, email_verified = 1 WHERE id = ?', [result.email, req.user.id]);
+      await db.run('UPDATE users SET email = $1, email_verified = TRUE WHERE id = $2', [result.email, req.user.id]);
     } catch (err) {
       if (db.isUniqueViolation(err)) return res.status(400).json({ error: "This email address can't be used." });
       throw err;
     }
-    otp.clearForUser(req.user.id, ['reset', 'change']); // codes sent to the previous address are void
+    await otp.clearForUser(req.user.id, ['reset', 'change']); // codes sent to the previous address are void
     console.log(`[auth] user #${req.user.id} verified an email address`);
     return res.json({ message: 'Email verified.', email: result.email, emailVerified: true, maskedEmail: maskEmail(result.email) });
   } catch (err) {

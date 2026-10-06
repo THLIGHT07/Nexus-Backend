@@ -10,7 +10,7 @@
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   const header = req.headers.authorization || '';
   const [scheme, token] = header.split(' ');
 
@@ -31,9 +31,9 @@ function authenticate(req, res, next) {
 
   try {
     // Make sure the user still exists (e.g. wasn't deleted after the token was issued).
-    const row = db.get(
-      'SELECT id, username, status, created_at, email, email_verified, password_changed_at FROM users WHERE id = ?',
-      [payload.id]
+    const row = await db.get(
+      'SELECT id, username, status, created_at, email, email_verified, password_changed_at FROM users WHERE id = $1',
+      [Number.isInteger(payload.id) ? payload.id : 0]
     );
     if (!row) {
       return res.status(401).json({ error: 'User no longer exists.' });
@@ -43,7 +43,7 @@ function authenticate(req, res, next) {
       return res.status(401).json({ error: 'Your password was changed. Please sign in again.' });
     }
     const { password_changed_at, ...user } = row;
-    user.email_verified = user.email_verified === 1;
+    user.email_verified = user.email_verified === true;
     if (user.status === 'blocked') {
       return res
         .status(403)

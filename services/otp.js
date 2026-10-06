@@ -11,7 +11,7 @@
  *  - Asking for a new code of the same purpose replaces the old one.
  *  - A code dies on first successful use, after 5 wrong guesses, or when it expires.
  *
- * Everything here is synchronous (sql.js), so two requests can never both "win" the same code.
+ * Every function is async (PostgreSQL); single use and the guess limit are enforced with atomic SQL — see check().
  */
 
 const crypto = require('crypto');
@@ -39,13 +39,18 @@ function safeEqualHex(a, b) {
 }
 
 /** Creates a fresh code (replacing any earlier one for this user + purpose). Returns the PLAIN code once, to be emailed. */
-function issue({ userId, purpose, email = null }) {
+async function issue({ userId, purpose, email = null }) {
   if (!PURPOSES.includes(purpose)) throw new Error(`Unknown OTP purpose: ${purpose}`);
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-  db.run('DELETE FROM otp_codes WHERE user_id = ? AND purpose = ?', [userId, purpose]);
-  db.run(
-    'INSERT INTO otp_codes (user_id, purpose, code_hash, email, attempts, expires_at, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)',
-    [userId, purpose, hashCode(userId, purpose, code), email, Date.now() + TTL_MS, Date.now()]
+  const now = Date.now();
+  // One atomic upsert: (user_id, purpose) is unique, so a new request replaces the old code and resets its guesses.
+  await db.run(
+    `INSERT INTO otp_codes (user_id, purpose, code_hash, email, attempts, expires_at, created_at)
+     VALUES ($1, $2, $3, $4, 0, $5, $6)
+     ON CONFLICT (user_id, purpose) DO UPDATE
+       SET code_hash = EXCLUDED.code_hash, email = EXCLUDED.email, attempts = 0,
+           expires_at = EXCLUDED.expires_at, created_at = EXCLUDED.created_at`,
+    [userId, purpose, hashCode(userId, purpose, code), email, now + TTL_MS, now]
   );
   return { code, expiresMinutes: TTL_MINUTES };
 }
@@ -53,38 +58,47 @@ function issue({ userId, purpose, email = null }) {
 /**
  * Checks a code. consume=true deletes it on success (single use).
  * Returns { ok: true, email } or { ok: false } — callers show ONE generic message for every failure.
+ *
+ * The database is shared by concurrent requests, so this is built from atomic statements:
+ *  1. the guess is COUNTED first (UPDATE ... attempts + 1 ... RETURNING) — parallel guesses cannot exceed MAX_ATTEMPTS;
+ *  2. a correct code is consumed with DELETE ... RETURNING — of two parallel requests with the right code, only one wins.
  */
-function check({ userId, purpose, code, consume }) {
-  const row = db.get(
-    'SELECT * FROM otp_codes WHERE user_id = ? AND purpose = ? ORDER BY id DESC LIMIT 1',
-    [userId, purpose]
+async function check({ userId, purpose, code, consume }) {
+  const now = Date.now();
+  const row = await db.get(
+    `UPDATE otp_codes SET attempts = attempts + 1
+      WHERE user_id = $1 AND purpose = $2 AND expires_at > $3 AND attempts < $4
+      RETURNING id, code_hash, email, attempts`,
+    [userId, purpose, now, MAX_ATTEMPTS]
   );
-  if (!row) return { ok: false };
-  if (row.expires_at <= Date.now()) {
-    db.run('DELETE FROM otp_codes WHERE id = ?', [row.id]);
+  if (!row) {
+    await db.run('DELETE FROM otp_codes WHERE user_id = $1 AND purpose = $2 AND expires_at <= $3', [userId, purpose, now]);
     return { ok: false };
   }
-  if (typeof code !== 'string' || !/^\d{6}$/.test(code) || !safeEqualHex(row.code_hash, hashCode(userId, purpose, code))) {
-    if (row.attempts + 1 >= MAX_ATTEMPTS) db.run('DELETE FROM otp_codes WHERE id = ?', [row.id]);
-    else db.run('UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?', [row.id]);
+  const good = typeof code === 'string' && /^\d{6}$/.test(code) && safeEqualHex(row.code_hash, hashCode(userId, purpose, code));
+  if (!good) {
+    if (row.attempts >= MAX_ATTEMPTS) await db.run('DELETE FROM otp_codes WHERE id = $1', [row.id]);
     return { ok: false };
   }
-  if (consume) db.run('DELETE FROM otp_codes WHERE id = ?', [row.id]);
+  if (consume) {
+    const del = await db.run('DELETE FROM otp_codes WHERE id = $1 RETURNING id', [row.id]);
+    return del.changes === 1 ? { ok: true, email: row.email } : { ok: false };
+  }
+  await db.run('UPDATE otp_codes SET attempts = attempts - 1 WHERE id = $1', [row.id]); // a correct code is not a failed guess
   return { ok: true, email: row.email };
 }
 
 /** Removes a user's outstanding codes (all purposes, or just the listed ones). */
-function clearForUser(userId, purposes) {
-  if (!purposes) return db.run('DELETE FROM otp_codes WHERE user_id = ?', [userId]);
-  for (const p of purposes) db.run('DELETE FROM otp_codes WHERE user_id = ? AND purpose = ?', [userId, p]);
+async function clearForUser(userId, purposes) {
+  if (!purposes) return db.run('DELETE FROM otp_codes WHERE user_id = $1', [userId]);
+  for (const p of purposes) await db.run('DELETE FROM otp_codes WHERE user_id = $1 AND purpose = $2', [userId, p]);
 }
 
-/** Housekeeping: drops expired codes and codes of deleted accounts. */
-function sweep() {
+/** Housekeeping: drops expired codes (codes of deleted accounts go via ON DELETE CASCADE). */
+async function sweep() {
   try {
-    db.run('DELETE FROM otp_codes WHERE expires_at <= ?', [Date.now()]);
-    db.run('DELETE FROM otp_codes WHERE user_id NOT IN (SELECT id FROM users)');
-  } catch (e) { /* db may be closing */ }
+    await db.run('DELETE FROM otp_codes WHERE expires_at <= $1', [Date.now()]);
+  } catch (e) { /* database may be restarting or closing; try again next time */ }
 }
 setInterval(sweep, 10 * 60 * 1000).unref();
 

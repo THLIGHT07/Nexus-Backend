@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="referrer" content="no-referrer" />
+<title>NEXUS STORAGE — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+<style>
+  /* Same palette as the main NEXUS site */
+  :root {
+    --bg: #0a0a0f;
+    --panel: #111118;
+    --panel-2: #16161f;
+    --border: rgba(255, 255, 255, 0.10);
+    --border2: rgba(255, 255, 255, 0.10);
+    --border3: rgba(255, 255, 255, 0.18);
+    --text: #f0eeff;
+    --text3: #55507a;
+    --muted: #9992bb;
+    --accent: #7c6fff;
+    --accent2: #a89cff;
+    --accent-hover: #6a5ee0;
+    --accent-glow: rgba(124, 111, 255, 0.18);
+    --green: #3dffb0;
+    --green-bg: rgba(61, 255, 176, 0.12);
+    --red: #ff4d6a;
+    --red-bg: rgba(255, 77, 106, 0.12);
+    --mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+    --sans: 'Syne', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+  }
+
+  /* ══════════════ PASSWORD GATE ══════════════ */
+  #gate {
+    position: fixed; inset: 0; z-index: 50;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+    background: radial-gradient(ellipse at 50% 30%, rgba(124, 111, 255, .10), rgba(0, 0, 0, .92) 65%), var(--bg);
+  }
+  #gate.show { display: flex; }
+
+  .login-box {
+    position: relative; overflow: hidden; isolation: isolate;
+    width: 100%; max-width: 392px; padding: 42px 38px 40px;
+    border-radius: 22px; text-align: center;
+    background: linear-gradient(155deg, rgba(28, 28, 40, .72), rgba(17, 17, 24, .86));
+    border: 1px solid rgba(124, 111, 255, .22);
+    box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .65), 0 0 0 1px rgba(255, 255, 255, .03) inset,
+                0 1px 0 rgba(255, 255, 255, .06) inset, 0 0 60px -12px rgba(124, 111, 255, .35);
+    animation: cardIn .55s cubic-bezier(.2, .9, .25, 1.15) both, cardGlow 5s ease-in-out .6s infinite;
+  }
+  @keyframes cardIn { from { opacity: 0; transform: translateY(26px) scale(.94); } to { opacity: 1; transform: none; } }
+  @keyframes cardGlow {
+    0%, 100% { box-shadow: 0 30px 80px -20px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.03) inset, 0 1px 0 rgba(255,255,255,.06) inset, 0 0 60px -12px rgba(124,111,255,.35); }
+    50%      { box-shadow: 0 30px 80px -20px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.03) inset, 0 1px 0 rgba(255,255,255,.06) inset, 0 0 78px -10px rgba(124,111,255,.55); }
+  }
+  .login-glow { position: absolute; z-index: 0; border-radius: 50%; filter: blur(46px); pointer-events: none; opacity: .55; }
+  .login-glow-a { width: 220px; height: 220px; background: radial-gradient(circle, rgba(124,111,255,.55), transparent 70%); top: -90px; left: -60px; animation: drift 9s ease-in-out infinite; }
+  .login-glow-b { width: 200px; height: 200px; background: radial-gradient(circle, rgba(168,156,255,.45), transparent 70%); bottom: -100px; right: -70px; animation: drift 11s ease-in-out infinite reverse; }
+  @keyframes drift { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(18px, -14px) scale(1.12); } }
+
+  .login-inner { position: relative; z-index: 1; }
+
+  .login-icon-ring {
+    width: 64px; height: 64px; border-radius: 50%; margin: 0 auto 18px;
+    display: flex; align-items: center; justify-content: center; color: var(--accent2);
+    background: linear-gradient(155deg, rgba(124,111,255,.18), rgba(124,111,255,.04));
+    border: 1px solid rgba(124, 111, 255, .4);
+    box-shadow: 0 0 0 6px rgba(124,111,255,.06), 0 0 24px -4px rgba(124,111,255,.5);
+    animation: ringPulse 2.6s ease-in-out infinite;
+  }
+  @keyframes ringPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+  .login-icon-ring svg, .field-icon svg, .eye-btn svg { width: 1em; height: 1em; display: block; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .login-icon-ring svg { font-size: 26px; }
+
+  .login-title {
+    font-size: 20px; font-weight: 700; letter-spacing: .08em; margin-bottom: 4px;
+    background: linear-gradient(135deg, #fff 30%, var(--accent2));
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .login-sub { font-size: 11.5px; color: var(--text3); font-family: var(--mono); letter-spacing: .02em; margin-bottom: 26px; }
+
+  .login-field { position: relative; margin-bottom: 13px; }
+  .field-icon { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); font-size: 15px; color: var(--text3); transition: color .2s; pointer-events: none; }
+  .login-input {
+    width: 100%; padding: 13px 40px 13px 40px;
+    background: rgba(255, 255, 255, .03); border: 1px solid var(--border2); border-radius: 11px;
+    color: var(--text); font-size: 13.5px; font-family: var(--sans); outline: none; letter-spacing: .02em;
+    transition: border-color .22s, box-shadow .22s, background .22s, transform .15s;
+  }
+  .login-input::placeholder { color: var(--text3); }
+  .login-input:hover { border-color: var(--border3); }
+  .login-input:focus { border-color: var(--accent); background: rgba(124,111,255,.05); box-shadow: 0 0 0 3px var(--accent-glow), 0 0 18px -4px rgba(124,111,255,.5); transform: translateY(-1px); }
+  .login-field:focus-within .field-icon { color: var(--accent2); }
+  .login-input:disabled { opacity: .55; cursor: not-allowed; }
+  .login-input.shake { animation: shake .38s; }
+  @keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
+
+  .eye-btn {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 30px; height: 30px; padding: 0; border: none; background: transparent; color: var(--text3);
+    cursor: pointer; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px;
+    transition: color .2s, background .2s;
+  }
+  .eye-btn:hover { color: var(--accent2); background: rgba(124,111,255,.1); border: none; }
+
+  .login-err { font-size: 11.5px; color: var(--red); min-height: 32px; margin: 4px 2px 8px; font-family: var(--mono); text-align: left; line-height: 1.45; opacity: 0; transition: opacity .2s; }
+  .login-err.show { opacity: 1; }
+  .login-err.info { color: var(--accent2); }
+
+  .login-btn {
+    position: relative; overflow: hidden; width: 100%; padding: 13px; margin-top: 4px; justify-content: center;
+    background: linear-gradient(135deg, var(--accent), #6a5ee0); color: #fff; border: none; border-radius: 11px;
+    font-size: 13.5px; font-family: var(--sans); font-weight: 700; letter-spacing: .08em; cursor: pointer;
+    box-shadow: 0 10px 26px -10px rgba(124,111,255,.6);
+    transition: transform .15s, box-shadow .25s, filter .2s;
+  }
+  .login-btn::after { content: ""; position: absolute; inset: 0; background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.35) 48%, transparent 66%); transform: translateX(-120%); transition: transform .6s; }
+  .login-btn:hover { color: #fff; filter: brightness(1.08); box-shadow: 0 12px 32px -8px rgba(124,111,255,.75); transform: translateY(-1px); }
+  .login-btn:hover::after { transform: translateX(120%); }
+  .login-btn:active { transform: scale(.98); }
+  .login-btn:disabled { cursor: not-allowed; filter: saturate(.6) brightness(.85); transform: none; }
+  .login-btn .spin { display: none; border-color: rgba(255,255,255,.35); border-top-color: #fff; }
+  .login-btn.loading .spin { display: inline-block; }
+
+  .login-hint-row { margin-top: 20px; font-size: 10.5px; color: var(--text3); font-family: var(--mono); letter-spacing: .02em; }
+  .checking { padding: 34px 0 8px; font-family: var(--mono); font-size: 12px; color: var(--accent2); letter-spacing: .12em; }
+  .checking .spin { margin-right: 8px; vertical-align: -2px; }
+
+  /* ══════════════ ADMIN PANEL ══════════════ */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 28px; border-bottom: 1px solid var(--border); background: var(--panel);
+    flex-wrap: wrap; gap: 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .brand h1 { font-size: 18px; margin: 0; letter-spacing: .08em; }
+  .brand span { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  button, .btn {
+    font-family: inherit; font-size: 13px; font-weight: 600; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+    padding: 9px 14px; cursor: pointer; transition: .15s ease; text-decoration: none;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  button:hover, .btn:hover { border-color: var(--accent); color: #fff; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-lock:hover { border-color: var(--red); color: var(--red); }
+
+  main { padding: 28px; max-width: 1100px; margin: 0 auto; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+  .toolbar h2 { font-size: 15px; margin: 0; color: var(--muted); font-weight: 600; }
+  .toolbar .meta { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  thead th { text-align: left; padding: 14px 18px; background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+  tbody td { padding: 14px 18px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: rgba(255, 255, 255, .02); }
+  .username { font-weight: 600; }
+  .id-tag { color: var(--muted); font-size: 12px; margin-left: 6px; font-family: var(--mono); }
+  .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .3px; }
+  .badge.active { background: var(--green-bg); color: var(--green); }
+  .badge.blocked { background: var(--red-bg); color: var(--red); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .actions button { padding: 6px 10px; font-size: 12px; }
+  .act-block:hover { border-color: var(--red); color: var(--red); }
+  .act-unblock:hover { border-color: var(--green); color: var(--green); }
+  .act-delete:hover { border-color: var(--red); background: var(--red-bg); color: var(--red); }
+  .empty, .loading, .error-state { padding: 48px 18px; text-align: center; color: var(--muted); font-size: 14px; }
+  .error-state { color: var(--red); }
+
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: 12px 18px; border-radius: 8px; font-size: 13px; opacity: 0; pointer-events: none;
+    transition: .25s ease; box-shadow: 0 8px 24px rgba(0, 0, 0, .4); z-index: 60;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.err { border-color: var(--red); color: var(--red); }
+  #toast.ok { border-color: var(--green); color: var(--green); }
+
+  .spin { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- ═════════════ PASSWORD GATE (shown first; the panel below is hidden until the server accepts the password) ═════════════ -->
+<div id="gate" class="show">
+  <div class="login-box">
+    <div class="login-glow login-glow-a"></div>
+    <div class="login-glow login-glow-b"></div>
+    <div class="login-inner">
+      <div class="login-icon-ring">
+        <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 2.9 8.3 7 10 4.1-1.7 7-5.6 7-10V6l-7-3z"/><rect x="9.5" y="10.5" width="5" height="4" rx="1"/><path d="M10.5 10.5V9a1.5 1.5 0 0 1 3 0v1.5"/></svg>
+      </div>
+      <div class="login-title">NEXUS ADMIN</div>
+      <div class="login-sub">Restricted area — enter the admin password</div>
+
+      <div id="gateChecking" class="checking" hidden><span class="spin"></span>VERIFYING SESSION…</div>
+
+      <form id="gateForm" autocomplete="off" novalidate>
+        <div class="login-field">
+          <span class="field-icon"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
+          <input class="login-input" id="gatePass" type="password" placeholder="Admin password" autocomplete="current-password" maxlength="256" autofocus />
+          <button type="button" class="eye-btn" id="gateEye" tabindex="-1" aria-label="Show password">
+            <svg viewBox="0 0 24 24" id="gateEyeIcon"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+        <div class="login-err" id="gateErr" role="alert" aria-live="polite"></div>
+        <button type="submit" class="login-btn" id="gateBtn"><span class="spin"></span><span id="gateBtnLabel">UNLOCK</span></button>
+      </form>
+
+      <div class="login-hint-row">Your admin session ends when you close this tab.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════════ ADMIN PANEL (hidden until authenticated) ═════════════ -->
+<div id="app" hidden>
+  <header>
+    <div class="brand">
+      <span class="dot"></span>
+      <div>
+        <h1>NEXUS STORAGE</h1>
+        <span>Admin Control Panel</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="refreshBtn">⟳ Refresh</button>
+      <a class="btn btn-primary" id="siteBtn" href="#" target="_blank" rel="noopener">Open Main Website ↗</a>
+      <button id="lockBtn" class="btn-lock" title="Sign out of the admin panel">🔒 Lock</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <h2>Registered Users</h2>
+      <span class="meta" id="meta"></span>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Username</th><th>Status</th><th>Registered</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ---------------------------------------------------------------------------
+  // Config — change these to match your setup.
+  // ---------------------------------------------------------------------------
+  // Deploy: change API_BASE to your live backend URL (e.g. https://your-api.railway.app)
+  const API_BASE = 'http://localhost:5000'; // <- the ONE line to change for production (no trailing slash)
+  const API_URL = API_BASE.replace(/\/+$/, '') + '/api/admin';
+  const MAIN_SITE_URL = 'http://localhost:5000'; // "Open site" button: point this at your live FRONTEND URL when deploying
+  const AUTO_REFRESH_MS = 10000; // set to 0 to disable auto-refresh
+
+  // The admin token lives in sessionStorage (this tab only, gone when the tab closes) —
+  // deliberately NOT localStorage. The password itself is never stored anywhere.
+  const TOKEN_KEY = 'nexus_admin_token';
+
+  const $ = (id) => document.getElementById(id);
+  const gate = $('gate'), gateForm = $('gateForm'), gatePass = $('gatePass'), gateErr = $('gateErr');
+  const gateBtn = $('gateBtn'), gateBtnLabel = $('gateBtnLabel'), gateChecking = $('gateChecking');
+  const app = $('app'), tbody = $('tbody'), meta = $('meta'), toast = $('toast');
+
+  $('siteBtn').href = MAIN_SITE_URL;
+
+  let adminToken = null;
+  try { adminToken = sessionStorage.getItem(TOKEN_KEY); } catch (e) { /* storage blocked */ }
+  let refreshTimer = null;
+  let countdownTimer = null;
+
+  // ---------------------------------------------------------------------------
+  // Small helpers
+  // ---------------------------------------------------------------------------
+  function showToast(message, ok = true) {
+    toast.textContent = message;
+    toast.className = ok ? 'show ok' : 'show err';
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => (toast.className = ''), 2800);
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function formatDate(raw) {
+    // PostgreSQL sends ISO strings ("2026-09-28T12:48:02.000Z"); old SQLite-style values ("2026-09-28 12:48:02", UTC) still work.
+    const str = String(raw);
+    const d = /(?:Z|[+-]\d\d:?\d\d)$/.test(str) ? new Date(str) : new Date(str.replace(' ', 'T') + 'Z');
+    if (isNaN(d)) return escapeHtml(raw);
+    return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function saveToken(t) {
+    adminToken = t;
+    try { sessionStorage.setItem(TOKEN_KEY, t); } catch (e) { /* ignore */ }
+  }
+  function clearToken() {
+    adminToken = null;
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
+  }
+
+  // ---------------------------------------------------------------------------
+  // API helper — every admin request carries the admin token
+  // ---------------------------------------------------------------------------
+  class ApiError extends Error {
+    constructor(status, message, data) { super(message); this.status = status; this.data = data || {}; }
+  }
+
+  async function api(path, { method = 'GET', body, auth = true } = {}) {
+    const headers = {};
+    if (auth && adminToken) headers.Authorization = 'Bearer ' + adminToken;
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+    let res;
+    try {
+      res = await fetch(API_URL + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, cache: 'no-store' });
+    } catch (e) {
+      throw new ApiError(0, `Can't reach the backend at ${API_URL}. Is the server running?`);
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // The server no longer accepts our token (expired / revoked / password changed) → back to the gate.
+      if (res.status === 401 && auth) lockOut('Your admin session ended. Please sign in again.');
+      throw new ApiError(res.status, data.error || `Server responded ${res.status}`, data);
+    }
+    return data;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Gate <-> panel switching
+  // ---------------------------------------------------------------------------
+  function setGateMessage(text, kind = 'err') {
+    gateErr.textContent = text || '';
+    gateErr.className = 'login-err' + (text ? ' show' : '') + (kind === 'info' ? ' info' : '');
+  }
+
+  function showGate({ checking = false, message = '', kind = 'err' } = {}) {
+    app.hidden = true;
+    gate.classList.add('show');
+    gateChecking.hidden = !checking;
+    gateForm.hidden = checking;
+    setGateMessage(message, kind);
+    if (!checking) setTimeout(() => gatePass.focus(), 30);
+  }
+
+  function showApp() {
+    gate.classList.remove('show');
+    gatePass.value = '';
+    setGateMessage('');
+    app.hidden = false;
+    loadUsers();
+    startAutoRefresh();
+  }
+
+  /** Ends the admin session on this page: forget the token, wipe the user list from the DOM, show the gate. */
+  function lockOut(message = '') {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+    clearToken();
+    tbody.innerHTML = '';
+    meta.textContent = '';
+    if (!countdownTimer) showGate({ message, kind: message.startsWith('Signed out') ? 'info' : 'err' });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Password gate behaviour
+  // ---------------------------------------------------------------------------
+  $('gateEye').addEventListener('click', () => {
+    const show = gatePass.type === 'password';
+    gatePass.type = show ? 'text' : 'password';
+    $('gateEye').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    gatePass.focus();
+  });
+
+  function setBusy(busy) {
+    gateBtn.disabled = busy;
+    gateBtn.classList.toggle('loading', busy);
+  }
+
+  function startLockCountdown(seconds) {
+    clearInterval(countdownTimer);
+    let left = Math.max(1, Math.ceil(seconds));
+    gatePass.disabled = true;
+    gateBtn.disabled = true;
+    const tick = () => {
+      const m = String(Math.floor(left / 60)).padStart(2, '0'), s = String(left % 60).padStart(2, '0');
+      gateBtnLabel.textContent = `LOCKED ${m}:${s}`;
+      if (left-- <= 0) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+        gatePass.disabled = false;
+        gateBtn.disabled = false;
+        gateBtnLabel.textContent = 'UNLOCK';
+        setGateMessage('');
+        gatePass.focus();
+      }
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
+  gateForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (gateBtn.disabled) return;
+    const password = gatePass.value;
+    if (!password) {
+      setGateMessage('Enter the admin password.');
+      return;
+    }
+    setGateMessage('');
+    setBusy(true);
+    try {
+      const data = await api('/login', { method: 'POST', body: { password }, auth: false });
+      saveToken(data.token);
+      setBusy(false);
+      showApp();
+    } catch (err) {
+      setBusy(false);
+      gatePass.value = '';
+      if (err.status === 429) {
+        setGateMessage(err.message);
+        startLockCountdown(err.data.retryAfterSeconds || 900);
+      } else if (err.status === 401) {
+        const left = err.data.attemptsLeft;
+        setGateMessage(left !== undefined ? `Incorrect password. ${left} attempt${left === 1 ? '' : 's'} left.` : 'Incorrect password.');
+        gatePass.classList.remove('shake');
+        void gatePass.offsetWidth; // restart the shake animation
+        gatePass.classList.add('shake');
+        gatePass.focus();
+      } else {
+        setGateMessage(err.message); // 503 "not configured", network down, etc.
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Users table
+  // ---------------------------------------------------------------------------
+  function renderRows(users) {
+    if (!users.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">No registered users yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = users.map((u) => {
+      const isBlocked = u.status === 'blocked';
+      return `
+        <tr data-id="${Number(u.id)}">
+          <td><span class="username">${escapeHtml(u.username)}</span><span class="id-tag">#${Number(u.id)}</span></td>
+          <td><span class="badge ${isBlocked ? 'blocked' : 'active'}">${isBlocked ? 'Blocked' : 'Active'}</span></td>
+          <td>${formatDate(u.created_at)}</td>
+          <td>
+            <div class="actions">
+              ${isBlocked
+                ? `<button class="act-unblock" data-action="unblock">Unblock</button>`
+                : `<button class="act-block" data-action="block">Block</button>`}
+              <button class="act-delete" data-action="delete">Delete</button>
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
+  }
+
+  async function loadUsers({ silent = false } = {}) {
+    if (!adminToken) return;
+    if (!silent) {
+      tbody.innerHTML = '<tr><td colspan="4" class="loading"><span class="spin"></span>&nbsp; Loading users...</td></tr>';
+    }
+    try {
+      const data = await api('/users');
+      if (!adminToken) return; // locked while the request was in flight
+      renderRows(data.users);
+      meta.textContent = `${data.users.length} user${data.users.length === 1 ? '' : 's'} · updated ${new Date().toLocaleTimeString()}`;
+    } catch (err) {
+      if (err.status === 401) return; // already sent back to the gate
+      tbody.innerHTML = `<tr><td colspan="4" class="error-state">${escapeHtml(err.message)}</td></tr>`;
+      meta.textContent = '';
+    }
+  }
+
+  async function handleAction(id, action) {
+    const endpoints = {
+      block: { path: `/block/${id}`, method: 'POST' },
+      unblock: { path: `/unblock/${id}`, method: 'POST' },
+      delete: { path: `/users/${id}`, method: 'DELETE' },
+    };
+    const cfg = endpoints[action];
+    if (!cfg) return;
+
+    if (action === 'delete' && !confirm('Permanently delete this user? This cannot be undone.')) return;
+
+    try {
+      const data = await api(cfg.path, { method: cfg.method });
+      showToast(data.message || 'Done.', true);
+      loadUsers({ silent: true });
+    } catch (err) {
+      if (err.status !== 401) showToast(err.message, false);
+    }
+  }
+
+  tbody.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const row = e.target.closest('tr[data-id]');
+    handleAction(row.dataset.id, btn.dataset.action);
+  });
+
+  $('refreshBtn').addEventListener('click', () => loadUsers());
+
+  $('lockBtn').addEventListener('click', async () => {
+    try { await api('/logout', { method: 'POST' }); } catch (e) { /* even if this fails, sign out locally */ }
+    lockOut('Signed out. Enter the password to get back in.');
+  });
+
+  function startAutoRefresh() {
+    clearInterval(refreshTimer);
+    if (AUTO_REFRESH_MS > 0) refreshTimer = setInterval(() => loadUsers({ silent: true }), AUTO_REFRESH_MS);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Start: nothing is shown or requested until the server has accepted a token.
+  // ---------------------------------------------------------------------------
+  (async function start() {
+    if (!adminToken) { showGate(); return; }
+    showGate({ checking: true });
+    try {
+      await api('/verify');
+      showApp();
+    } catch (err) {
+      if (err.status !== 401) showGate({ message: err.message }); // 401 already showed the gate
+    }
+  })();
+</script>
+</body>
+</html>

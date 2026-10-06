@@ -39,9 +39,9 @@ function parseId(raw) {
 // -----------------------------------------------------------------------------
 // GET /api/admin/users
 // -----------------------------------------------------------------------------
-router.get('/users', (req, res, next) => {
+router.get('/users', async (req, res, next) => {
   try {
-    const users = db.all(
+    const users = await db.all(
       'SELECT id, username, status, created_at FROM users ORDER BY id DESC'
     );
     res.json({ users });
@@ -53,18 +53,18 @@ router.get('/users', (req, res, next) => {
 // -----------------------------------------------------------------------------
 // POST /api/admin/block/:id
 // -----------------------------------------------------------------------------
-router.post('/block/:id', (req, res, next) => {
+router.post('/block/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Invalid user id.' });
 
-    const user = db.get('SELECT id FROM users WHERE id = ?', [id]);
+    const user = await db.get('SELECT id FROM users WHERE id = $1', [id]);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
-    db.run("UPDATE users SET status = 'blocked' WHERE id = ?", [id]);
+    await db.run("UPDATE users SET status = 'blocked' WHERE id = $1", [id]);
     console.log(`[admin] ${req.admin.ip} blocked user #${id}`);
-    const updated = db.get(
-      'SELECT id, username, status, created_at FROM users WHERE id = ?',
+    const updated = await db.get(
+      'SELECT id, username, status, created_at FROM users WHERE id = $1',
       [id]
     );
     res.json({ message: 'User blocked.', user: updated });
@@ -76,18 +76,18 @@ router.post('/block/:id', (req, res, next) => {
 // -----------------------------------------------------------------------------
 // POST /api/admin/unblock/:id
 // -----------------------------------------------------------------------------
-router.post('/unblock/:id', (req, res, next) => {
+router.post('/unblock/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Invalid user id.' });
 
-    const user = db.get('SELECT id FROM users WHERE id = ?', [id]);
+    const user = await db.get('SELECT id FROM users WHERE id = $1', [id]);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
-    db.run("UPDATE users SET status = 'active' WHERE id = ?", [id]);
+    await db.run("UPDATE users SET status = 'active' WHERE id = $1", [id]);
     console.log(`[admin] ${req.admin.ip} unblocked user #${id}`);
-    const updated = db.get(
-      'SELECT id, username, status, created_at FROM users WHERE id = ?',
+    const updated = await db.get(
+      'SELECT id, username, status, created_at FROM users WHERE id = $1',
       [id]
     );
     res.json({ message: 'User unblocked.', user: updated });
@@ -99,15 +99,15 @@ router.post('/unblock/:id', (req, res, next) => {
 // -----------------------------------------------------------------------------
 // DELETE /api/admin/users/:id
 // -----------------------------------------------------------------------------
-router.delete('/users/:id', (req, res, next) => {
+router.delete('/users/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Invalid user id.' });
 
-    const user = db.get('SELECT id FROM users WHERE id = ?', [id]);
+    const user = await db.get('SELECT id FROM users WHERE id = $1', [id]);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
-    db.run('DELETE FROM users WHERE id = ?', [id]);
+    await db.run('DELETE FROM users WHERE id = $1', [id]); // their profile, settings, apps and notes are removed too (ON DELETE CASCADE)
     console.log(`[admin] ${req.admin.ip} deleted user #${id}`);
     res.json({ message: 'User deleted permanently.' });
   } catch (err) {
