@@ -30,6 +30,10 @@ const router = express.Router();
 const SALT_ROUNDS = 12;
 const TOKEN_EXPIRY = '7d';
 
+// Version of the Terms of Use / Privacy Policy pages (their "Last updated" date). Stored next to the acceptance
+// timestamp for your records. Override with TERMS_VERSION in .env when you publish new wording.
+const TERMS_VERSION = process.env.TERMS_VERSION || '2026-10-08';
+
 // bcrypt silently ignores anything past 72 bytes, so we cap the length.
 // Usernames: only a-z, 0-9 and hyphen (-); at least 5 letters and at least 1 digit; no spaces; always stored
 // lowercase; 30 characters at most; unique (case-insensitive).
@@ -191,7 +195,7 @@ router.post('/login', normalizeUsernameBody, loginGuard, async (req, res, next) 
     // Case-insensitive (the database enforces one account per lower-cased name), so accounts created
     // before the lowercase rule still log in.
     const user = await db.get(
-      'SELECT id, username, password_hash, status, created_at FROM users WHERE lower(username) = $1',
+      'SELECT id, username, password_hash, status, created_at, terms_accepted_at, terms_version FROM users WHERE lower(username) = $1',
       [username]
     );
 
@@ -227,8 +231,36 @@ router.post('/login', normalizeUsernameBody, loginGuard, async (req, res, next) 
       message: 'Login successful.',
       token,
       expiresIn: TOKEN_EXPIRY,
-      user: { id: user.id, username: user.username, created_at: user.created_at },
+      user: {
+        id: user.id,
+        username: user.username,
+        created_at: user.created_at,
+        terms_accepted_at: user.terms_accepted_at, // null until the user accepts the Terms + Privacy Policy gate
+        terms_version: user.terms_version,
+      },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// -----------------------------------------------------------------------------
+// POST /api/auth/accept-terms  (protected) — record that THIS account accepted the Terms of Use + Privacy Policy
+// -----------------------------------------------------------------------------
+// No body needed. Idempotent: the first acceptance time/version is kept (COALESCE), so repeating the call, or
+// accepting from a second device, changes nothing. Once set, the app never shows the acceptance gate again.
+router.post('/accept-terms', authenticate, async (req, res, next) => {
+  try {
+    const row = await db.get(
+      `UPDATE users
+          SET terms_accepted_at = COALESCE(terms_accepted_at, now()),
+              terms_version     = COALESCE(terms_version, $2)
+        WHERE id = $1
+    RETURNING terms_accepted_at, terms_version`,
+      [req.user.id, TERMS_VERSION]
+    );
+    if (!row) return res.status(401).json({ error: 'User no longer exists.' });
+    return res.json({ message: 'Terms accepted.', terms_accepted_at: row.terms_accepted_at, terms_version: row.terms_version });
   } catch (err) {
     next(err);
   }

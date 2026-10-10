@@ -32,7 +32,7 @@ async function authenticate(req, res, next) {
   try {
     // Make sure the user still exists (e.g. wasn't deleted after the token was issued).
     const row = await db.get(
-      'SELECT id, username, status, created_at, email, email_verified, password_changed_at FROM users WHERE id = $1',
+      'SELECT id, username, status, created_at, email, email_verified, password_changed_at, terms_accepted_at, terms_version FROM users WHERE id = $1',
       [Number.isInteger(payload.id) ? payload.id : 0]
     );
     if (!row) {
