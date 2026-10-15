@@ -26,6 +26,7 @@ const db = require('./db');
 const authRoutes = require('./routes/auth');
 const authOtpRoutes = require('./routes/authOtp');
 const meRoutes = require('./routes/me');
+const vaultRoutes = require('./routes/vault');
 const mailer = require('./services/mailer');
 const adminRoutes = require('./routes/admin');
 
@@ -52,6 +53,7 @@ app.use(corsOrigins.length && !corsOrigins.includes('*') ? cors({ origin: corsOr
 // Body size limits are per area: credentials are tiny, the per-user data (apps, notes) is not.
 const smallJson = express.json({ limit: '10kb' });
 const userDataJson = express.json({ limit: '2mb' });
+const vaultJson = express.json({ limit: '64kb' }); // API Vault rows are tiny ciphertext blobs
 
 // --- Routes ------------------------------------------------------------------
 // Health check (Railway etc.): 200 only while the database answers.
@@ -65,6 +67,7 @@ app.get('/api/health', async (req, res) => {
 });
 app.use('/api/auth', smallJson, authRoutes);
 app.use('/api/auth', smallJson, authOtpRoutes); // forgot / change password + email linking (email codes via Brevo)
+app.use('/api/me/vault', vaultJson, vaultRoutes); // API Vault: client-side-encrypted keys (ciphertext only). Must stay BEFORE /api/me.
 app.use('/api/me', userDataJson, meRoutes);     // the signed-in user's profile, settings, apps, notes (PostgreSQL)
 // Protected: only POST /api/admin/login is public; the rest needs an admin token.
 app.use('/api/admin', smallJson, adminRoutes);
